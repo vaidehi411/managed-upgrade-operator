@@ -15,6 +15,7 @@ import (
 	"github.com/openshift/managed-upgrade-operator/pkg/upgradeconfigmanager"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -135,6 +136,19 @@ func (r *ReconcileNodeKeeper) Reconcile(ctx context.Context, request reconcile.R
 			}
 		} else {
 			metricsClient.ResetMetricNodeDrainFailed(node.Name)
+		}
+	} else {
+		reqLogger.Info(fmt.Sprintf("DisableDrainStrategy is true. Checking default node drain wait time"))
+		defaultDuration := cfg.NodeDrain.GetTimeOutDuration()
+		nodeCordonAt := result.AddedAt
+		if nodeCordonAt != nil && nodeCordonAt.Add(defaultDuration).Before(metav1.Now().Time) {
+			if node.DeletionTimestamp != nil {
+				reqLogger.Info(fmt.Sprintf("DeletionTimestamp set for the node %s. Re-setting NodeDrainFailed metric",
+					node.Name))
+				metricsClient.ResetMetricNodeDrainFailed(node.Name)
+			} else if r.Machinery.IsNodeUpgrading(node) {
+				metricsClient.UpdateMetricNodeDrainFailed(node.Name)
+			}
 		}
 	}
 
