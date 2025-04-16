@@ -44,7 +44,7 @@ type ReconcileNodeKeeper struct {
 // Result.Requeue is true, otherwise upon completion it will remove the work from the queue.
 func (r *ReconcileNodeKeeper) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	reqLogger := log.WithValues("Request.Name", request.Name)
-
+	reqLogger.Info(fmt.Sprintf("Reconcile Nodekeeper"))
 	upgradeConfigManagerClient, err := r.UpgradeConfigManagerBuilder.NewManager(r.Client)
 	if err != nil {
 		return reconcile.Result{}, err
@@ -100,14 +100,14 @@ func (r *ReconcileNodeKeeper) Reconcile(ctx context.Context, request reconcile.R
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-
+	reqLogger.Info(fmt.Sprintf("DisableDrainStrategies is : %t", cfg.NodeDrain.DisableDrainStrategies))
 	if !cfg.NodeDrain.DisableDrainStrategies {
 		drainStrategy, err := r.DrainstrategyBuilder.NewNodeDrainStrategy(r.Client, reqLogger, uc, &cfg.NodeDrain)
 		if err != nil {
 			reqLogger.Error(err, "Error while executing drain.")
 			return reconcile.Result{}, err
 		}
-
+		reqLogger.Info(fmt.Sprintf("Calling NewNodeDrainStrategy Execute"))
 		res, err := drainStrategy.Execute(node, reqLogger)
 		if err != nil {
 			return reconcile.Result{}, err
@@ -138,7 +138,7 @@ func (r *ReconcileNodeKeeper) Reconcile(ctx context.Context, request reconcile.R
 			metricsClient.ResetMetricNodeDrainFailed(node.Name)
 		}
 	} else {
-		reqLogger.Info(fmt.Sprintf("DisableDrainStrategy is true. Checking default node drain wait time"))
+		reqLogger.Info(fmt.Sprintf("DisableDrainStrategy is %t. Checking default node drain wait time", cfg.NodeDrain.DisableDrainStrategies))
 		defaultDuration := cfg.NodeDrain.GetTimeOutDuration()
 		nodeCordonAt := result.AddedAt
 		if nodeCordonAt != nil && nodeCordonAt.Add(defaultDuration).Before(metav1.Now().Time) {
@@ -146,9 +146,16 @@ func (r *ReconcileNodeKeeper) Reconcile(ctx context.Context, request reconcile.R
 				reqLogger.Info(fmt.Sprintf("DeletionTimestamp set for the node %s. Re-setting NodeDrainFailed metric",
 					node.Name))
 				metricsClient.ResetMetricNodeDrainFailed(node.Name)
-			} else if r.Machinery.IsNodeUpgrading(node) {
-				metricsClient.UpdateMetricNodeDrainFailed(node.Name)
+			} else {
+				if r.Machinery.IsNodeUpgrading(node) {
+					reqLogger.Info(fmt.Sprintf("Default Node drain timeout : %s, updating node darin failed metric to 1",
+						node.Name))
+					metricsClient.UpdateMetricNodeDrainFailed(node.Name)
+				}
+				return reconcile.Result{RequeueAfter: time.Minute * 1}, nil
 			}
+		} else {
+			metricsClient.ResetMetricNodeDrainFailed(node.Name)
 		}
 	}
 
